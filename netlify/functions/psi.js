@@ -1,23 +1,32 @@
+const https = require('https');
+
+function httpsGet(url) {
+  return new Promise((resolve, reject) => {
+    https.get(url, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try { resolve({ status: res.statusCode, body: JSON.parse(data) }); }
+        catch(e) { reject(new Error('JSON parse error')); }
+      });
+    }).on('error', reject);
+  });
+}
+
 exports.handler = async function (event) {
-  // Só aceita GET
   if (event.httpMethod !== 'GET') {
     return { statusCode: 405, body: 'Method Not Allowed' };
   }
 
   const siteUrl = event.queryStringParameters?.url;
   if (!siteUrl) {
-    return {
-      statusCode: 400,
-      body: JSON.stringify({ error: 'Parâmetro url é obrigatório' }),
-    };
+    return { statusCode: 400, body: JSON.stringify({ error: 'Parâmetro url obrigatório' }) };
   }
 
-  // Valida URL
   try { new URL(siteUrl); } catch {
     return { statusCode: 400, body: JSON.stringify({ error: 'URL inválida' }) };
   }
 
-  // Chave fica SOMENTE na variável de ambiente do Netlify — nunca no código
   const apiKey = process.env.PSI_API_KEY;
   if (!apiKey) {
     return { statusCode: 500, body: JSON.stringify({ error: 'PSI_API_KEY não configurada' }) };
@@ -31,17 +40,15 @@ exports.handler = async function (event) {
     `&key=${apiKey}`;
 
   try {
-    const res = await fetch(psiUrl);
-    const data = await res.json();
+    const { status, body: data } = await httpsGet(psiUrl);
 
-    if (!res.ok) {
+    if (status !== 200) {
       return {
-        statusCode: res.status,
+        statusCode: status,
         body: JSON.stringify({ error: data?.error?.message || 'Erro PSI' }),
       };
     }
 
-    // Extrai só o que a calculadora precisa — não expõe o JSON inteiro
     const metrics = data?.loadingExperience?.metrics || {};
     const lab     = data?.lighthouseResult?.audits  || {};
     const source  = Object.keys(metrics).length > 0 ? 'field' : 'lab';
@@ -71,7 +78,7 @@ exports.handler = async function (event) {
       statusCode: 200,
       headers: {
         'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*', // permite chamada do HTML estático
+        'Access-Control-Allow-Origin': '*',
       },
       body: JSON.stringify({ lcp, inp, cls, source }),
     };
